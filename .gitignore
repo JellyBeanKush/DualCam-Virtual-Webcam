@@ -1,0 +1,351 @@
+const state = {
+  cameraIds: [],
+  streams: [],
+  output: null,
+  faceDetector: null,
+  config: {
+    split: 50,
+    gap: 12,
+    zoom: 1.4,
+    panX: 0,
+    panY: 0,
+    smoothness: 8,
+    blurEnabled: true,
+    blurStrength: 12,
+    blurCutoff: 45,
+    scale: 1,
+  },
+  targetA: { x: 0, y: 0, w: 0, h: 0 },
+  targetB: { x: 0, y: 0, w: 0, h: 0 },
+  currentA: { x: 0, y: 0, w: 0, h: 0 },
+  currentB: { x: 0, y: 0, w: 0, h: 0 },
+};
+
+const statusText = document.getElementById('statusText');
+const canvas = document.getElementById('outputCanvas');
+const ctx = canvas.getContext('2d');
+const videoA = document.getElementById('videoA');
+const videoB = document.getElementById('videoB');
+const selectA = document.getElementById('cameraA');
+const selectB = document.getElementById('cameraB');
+
+const inputIds = {
+  split: document.getElementById('split'),
+  gap: document.getElementById('gap'),
+  zoom: document.getElementById('zoom'),
+  panX: document.getElementById('panX'),
+  panY: document.getElementById('panY'),
+  smoothness: document.getElementById('smoothness'),
+  blurEnabled: document.getElementById('blurEnabled'),
+  blurStrength: document.getElementById('blurStrength'),
+  blurCutoff: document.getElementById('blurCutoff'),
+  scale: document.getElementById('scale'),
+};
+
+function applyUIConfig() {
+  state.config.split = Number(inputIds.split.value);
+  state.config.gap = Number(inputIds.gap.value);
+  state.config.zoom = Number(inputIds.zoom.value) / 100;
+  state.config.panX = Number(inputIds.panX.value) / 100;
+  state.config.panY = Number(inputIds.panY.value) / 100;
+  state.config.smoothness = Number(inputIds.smoothness.value);
+  state.config.blurEnabled = inputIds.blurEnabled.checked;
+  state.config.blurStrength = Number(inputIds.blurStrength.value);
+  state.config.blurCutoff = Number(inputIds.blurCutoff.value) / 100;
+  state.config.scale = Number(inputIds.scale.value) / 100;
+}
+
+Object.values(inputIds).forEach((input) => {
+  input.addEventListener('input', applyUIConfig);
+  input.addEventListener('change', applyUIConfig);
+});
+
+async function listCameras() {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cameras = devices.filter((device) => device.kind === 'videoinput');
+  state.cameraIds = cameras;
+
+  const optionsA = cameras
+    .map((camera, index) => `<option value="${camera.deviceId}">${camera.label || `Camera ${index + 1}`}</option>`)
+    .join('');
+
+  const optionsB = cameras
+    .map((camera, index) => `<option value="${camera.deviceId}">${camera.label || `Camera ${index + 2}`}</option>`)
+    .join('');
+
+  selectA.innerHTML = optionsA;
+  selectB.innerHTML = optionsB;
+
+  if (cameras.length >= 2) {
+    selectA.value = cameras[0].deviceId;
+    selectB.value = cameras[1].deviceId;
+  }
+}
+
+async function startCamera(element, deviceId) {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      deviceId: { exact: deviceId },
+      facingMode: 'user',
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 60 }
+    },
+    audio: false,
+  });
+
+  element.srcObject = stream;
+  return stream;
+}
+
+async function initialize() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    statusText.textContent = 'Webcam access unavailable';
+    return;
+  }
+
+  await listCameras();
+
+  if (state.cameraIds.length < 2) {
+    statusText.textContent = 'Please connect two webcams';
+    return;
+  }
+
+  const camAId = selectA.value || state.cameraIds[0].deviceId;
+  const camBId = selectB.value || state.cameraIds[1].deviceId;
+
+  const streamA = await startCamera(videoA, camAId);
+  const streamB = await startCamera(videoB, camBId);
+
+  state.streams = [streamA, streamB];
+  statusText.textContent = 'Cameras live';
+
+  await initializeFaceDetection();
+  renderLoop();
+}
+
+async function initializeFaceDetection() {
+  try {
+    const { FaceLandmarker, FilesetResolver } = await window.FaceLandmarker;
+    const filesetResolver = await FilesetResolver.forVisionTasks(
+      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.10/wasm'
+    );
+
+    state.faceDetector = await FaceLandmarker.createFromOptions(filesetResolver, {
+      baseOptions: {
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+      },
+      runningMode: 'VIDEO',
+      numFaces: 1,
+      minFaceDetectionConfidence: 0.5,
+      minFacePresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    });
+  } catch (error) {
+    console.warn('Face detection not available:', error);
+    state.faceDetector = null;
+  }
+}
+
+function smoothRect(current, target, intensity) {
+  const next = { ...current };
+  const k = Math.max(0.01, Math.min(1, 1 / Math.max(1, intensity)));
+  next.x += (target.x - next.x) * k;
+  next.y += (target.y - next.y) * k;
+  next.w += (target.w - next.w) * k;
+  next.h += (target.h - next.h) * k;
+  return next;
+}
+
+function detectFace(video) {
+  if (!state.faceDetector || !video.videoWidth || !video.videoHeight) return null;
+
+  const result = state.faceDetector.detectForVideo(video, performance.now());
+  const faces = result.faceLandmarks || [];
+
+  if (!faces.length) return null;
+
+  const landmarks = faces[0];
+  const xs = landmarks.map((p) => p.x * video.videoWidth);
+  const ys = landmarks.map((p) => p.y * video.videoHeight);
+
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  const w = Math.max(...xs) - x;
+  const h = Math.max(...ys) - y;
+
+  return { x, y, w, h };
+}
+
+function computeFocusRect(sourceRect, frameW, frameH) {
+  if (!sourceRect || !sourceRect.w || !sourceRect.h) {
+    return { x: 0, y: 0, w: frameW, h: frameH };
+  }
+
+  const zoomFactor = state.config.zoom;
+  const panX = state.config.panX * (frameW * 0.35);
+  const panY = state.config.panY * (frameH * 0.35);
+
+  const cropW = Math.min(frameW, sourceRect.w / zoomFactor);
+  const cropH = Math.min(frameH, sourceRect.h / zoomFactor);
+  const centerX = sourceRect.x + sourceRect.w * 0.5 + panX;
+  const centerY = sourceRect.y + sourceRect.h * 0.5 + panY;
+
+  const cropX = clamp(centerX - cropW * 0.5, 0, frameW - cropW);
+  const cropY = clamp(centerY - cropH * 0.5, 0, frameH - cropH);
+
+  return {
+    x: clamp(cropX, 0, frameW),
+    y: clamp(cropY, 0, frameH),
+    w: cropW,
+    h: cropH,
+  };
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function applyBlur(frame, blurX, blurY, blurW, blurH) {
+  const blurCanvas = document.createElement('canvas');
+  blurCanvas.width = frame.width;
+  blurCanvas.height = frame.height;
+  const blurCtx = blurCanvas.getContext('2d');
+
+  blurCtx.filter = `blur(${state.config.blurStrength}px)`;
+  blurCtx.drawImage(frame, 0, 0);
+
+  const output = document.createElement('canvas');
+  output.width = frame.width;
+  output.height = frame.height;
+  const out = output.getContext('2d');
+
+  out.filter = 'none';
+  out.drawImage(frame, 0, 0);
+
+  out.save();
+  out.beginPath();
+  out.rect(0, 0, output.width, output.height);
+  out.clip();
+
+  const blurred = blurCtx.getImageData(blurX, blurY, blurW, blurH);
+  out.putImageData(blurred, blurX, blurY);
+  out.restore();
+
+  return output;
+}
+
+function drawVideoCrop(targetCtx, video, rect, x, y, width, height, useBlur) {
+  if (!video.videoWidth || !video.videoHeight) return;
+
+  const source = document.createElement('canvas');
+  source.width = video.videoWidth;
+  source.height = video.videoHeight;
+  const sctx = source.getContext('2d');
+  sctx.drawImage(video, 0, 0, source.width, source.height);
+
+  const crop = document.createElement('canvas');
+  crop.width = Math.max(1, Math.round(rect.w));
+  crop.height = Math.max(1, Math.round(rect.h));
+  const cctx = crop.getContext('2d');
+  cctx.drawImage(
+    source,
+    rect.x, rect.y, rect.w, rect.h,
+    0, 0, crop.width, crop.height
+  );
+
+  if (useBlur) {
+    const blurred = applyBlur(crop, 0, 0, crop.width, crop.height);
+    targetCtx.drawImage(blurred, x, y, width, height);
+  } else {
+    targetCtx.drawImage(crop, x, y, width, height);
+  }
+}
+
+function renderFrame() {
+  const width = canvas.width;
+  const height = canvas.height;
+  const splitRatio = state.config.split / 100;
+
+  const leftW = width * splitRatio;
+  const rightW = width - leftW;
+  const gap = state.config.gap;
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = '#050a12';
+  ctx.fillRect(0, 0, width, height);
+
+  const frameA = videoA;
+  const frameB = videoB;
+
+  const targetA = detectFace(frameA) || { x: 0, y: 0, w: frameA.videoWidth || 1920, h: frameA.videoHeight || 1080 };
+  const targetB = detectFace(frameB) || { x: 0, y: 0, w: frameB.videoWidth || 1920, h: frameB.videoHeight || 1080 };
+
+  state.targetA = targetA;
+  state.targetB = targetB;
+
+  const focusA = computeFocusRect(state.targetA, frameA.videoWidth || 1920, frameA.videoHeight || 1080);
+  const focusB = computeFocusRect(state.targetB, frameB.videoWidth || 1920, frameB.videoHeight || 1080);
+
+  state.currentA = smoothRect(state.currentA, focusA, state.config.smoothness);
+  state.currentB = smoothRect(state.currentB, focusB, state.config.smoothness);
+
+  const leftX = 0;
+  const rightX = leftW + gap;
+
+  const leftRect = {
+    x: state.currentA.x,
+    y: state.currentA.y,
+    w: state.currentA.w,
+    h: state.currentA.h,
+  };
+
+  const rightRect = {
+    x: state.currentB.x,
+    y: state.currentB.y,
+    w: state.currentB.w,
+    h: state.currentB.h,
+  };
+
+  drawVideoCrop(ctx, frameA, leftRect, 0, 0, leftW, height, false);
+  drawVideoCrop(ctx, frameB, rightRect, rightX, 0, width - rightX, height, false);
+
+  const overlay = ctx.getImageData(0, 0, width, height);
+  ctx.putImageData(overlay, 0, 0);
+
+  if (state.config.blurEnabled) {
+    ctx.globalAlpha = 0.78;
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(leftW, 0);
+  ctx.lineTo(leftW, height);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(rightX, 0);
+  ctx.lineTo(rightX, height);
+  ctx.stroke();
+}
+
+function renderLoop() {
+  applyUIConfig();
+  renderFrame();
+  requestAnimationFrame(renderLoop);
+}
+
+selectA.addEventListener('change', async () => {
+  await initialize();
+});
+
+selectB.addEventListener('change', async () => {
+  await initialize();
+});
+
+window.addEventListener('DOMContentLoaded', () => {
+  initialize();
+});

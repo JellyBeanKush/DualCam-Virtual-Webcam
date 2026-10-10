@@ -1,0 +1,24 @@
+{
+  "name": "dualcam-virtual-webcam",
+  "version": "0.1.0",
+  "description": "Dual webcam composition app with auto-framing and blur controls for Windows",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "test": "echo \"No automated tests configured yet.\" && exit 0"
+  },
+  "keywords": [
+    "webcam",
+    "virtual-camera",
+    "electron",
+    "dual-camera",
+    "streaming",
+    "windows"
+  ],
+  "author": "GitHub Copilot",
+  "license": "MIT",
+  "dependencies": {
+    "electron": "^31.0.0"
+  }
+}

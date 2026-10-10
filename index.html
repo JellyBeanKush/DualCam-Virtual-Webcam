@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DualCam Virtual Webcam</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="controls-panel">
+        <h1>DualCam</h1>
+        <div class="section">
+          <label>Camera A</label>
+          <select id="cameraA"></select>
+        </div>
+
+        <div class="section">
+          <label>Camera B</label>
+          <select id="cameraB"></select>
+        </div>
+
+        <div class="section">
+          <label>Layout</label>
+          <div class="range-group">
+            <span>Split</span>
+            <input id="split" type="range" min="0" max="100" value="50" />
+          </div>
+          <div class="range-group">
+            <span>Gap</span>
+            <input id="gap" type="range" min="0" max="80" value="12" />
+          </div>
+        </div>
+
+        <div class="section">
+          <label>Framing</label>
+          <div class="range-group">
+            <span>Zoom</span>
+            <input id="zoom" type="range" min="100" max="220" value="140" />
+          </div>
+          <div class="range-group">
+            <span>Pan X</span>
+            <input id="panX" type="range" min="-100" max="100" value="0" />
+          </div>
+          <div class="range-group">
+            <span>Pan Y</span>
+            <input id="panY" type="range" min="-100" max="100" value="0" />
+          </div>
+          <div class="range-group">
+            <span>Smoothness</span>
+            <input id="smoothness" type="range" min="1" max="20" value="8" />
+          </div>
+        </div>
+
+        <div class="section">
+          <label>Background Blur</label>
+          <div class="toggle-row">
+            <input id="blurEnabled" type="checkbox" checked />
+            <span>Enabled</span>
+          </div>
+          <div class="range-group">
+            <span>Blur</span>
+            <input id="blurStrength" type="range" min="0" max="24" value="12" />
+          </div>
+          <div class="range-group">
+            <span>Cutoff</span>
+            <input id="blurCutoff" type="range" min="0" max="100" value="45" />
+          </div>
+        </div>
+
+        <div class="section">
+          <label>Output</label>
+          <div class="range-group">
+            <span>Scale</span>
+            <input id="scale" type="range" min="50" max="150" value="100" />
+          </div>
+        </div>
+      </aside>
+
+      <main class="preview-panel">
+        <div class="status-bar">
+          <div class="status-pill" id="statusText">Waiting for cameras…</div>
+        </div>
+
+        <canvas id="outputCanvas" width="1280" height="720"></canvas>
+
+        <div class="monitor-grid">
+          <div class="cam-box">
+            <video id="videoA" autoplay playsinline muted></video>
+          </div>
+          <div class="cam-box">
+            <video id="videoB" autoplay playsinline muted></video>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.10/vision_bundle.js"></script>
+    <script src="renderer.js"></script>
+  </body>
+</html>
